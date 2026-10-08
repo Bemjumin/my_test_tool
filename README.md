@@ -1,8 +1,22 @@
 # my_test_tool
 
-在 Windows 上测试已经能启动的 PyQt 程序。交出 exe 和一份 Word 需求书即可，不需要源码。
+只手写一份产品需求说明书。三个智能体分别负责讲给客户听、按确认后的正文开发、以及按正文测试。
 
-智能体每次重新看当前窗口，完成四件事：按需求书写出本次用例，把写明的输入做进界面并核对结果，查找明显错误和崩溃，再按需求书里的角色把程序用一遍并提出建议。用例写进当次报告，不保存成下次脱离模型重放的脚本。
+产品需求说明书的章节按[产品需求文档模板](https://www.woshipm.com/pmd/933896.html)来写。模板、示例和三条命令见 [docs/产品需求说明书说明.md](docs/产品需求说明书说明.md)。
+
+```bat
+agent product --requirements 产品需求.docx --out 客户确认.docx
+agent code --requirements 产品需求.docx --confirmed 客户确认.docx --out 产品目录
+agent test-agent --requirements 产品需求.docx --exe C:\apps\ExpenseEntry.exe --out reports\run1
+```
+
+客户确认单只写「你会做什么」和「这时你会看到什么」。确认表里还有没写成「是这样」的条目时，`agent code` 不会开始开发。客户要改时，改产品需求说明书，再重新生成确认单。
+
+附录不作为正式需求，也不作为验收标准。编程和测试都不采用附录。
+
+测试需求说明书仍是原来的 12 节，由 `agent test-spec` 或 `agent test-agent` 从产品需求说明书生成。测试智能体每次重新看当前窗口，完成四件事：按测试需求书写出本次用例，把写明的输入做进界面并核对结果，查找明显错误和崩溃，再按角色把程序用一遍并提出建议。用例写进当次报告，不保存成下次脱离模型重放的脚本。
+
+已经有测试需求说明书时，继续用 `agent confirm` 和 `agent test`。
 
 ## 准备
 
@@ -18,9 +32,11 @@ set PYQT_AGENT_MODEL=composer-2.5
 
 密钥在 [cursor.com/dashboard](https://cursor.com/dashboard) 的 API Keys 里创建，使用用户密钥或服务账号密钥。团队管理员密钥不能调用 Python SDK。
 
-看界面和下判断走 Cursor Python SDK，在本机启动一次不带文件和终端工具的智能体，把控件树和截图交给它，只取回 JSON。默认模型是 `composer-2.5`，换模型时改 `PYQT_AGENT_MODEL` 或加上 `--model`。费用记在这个 Cursor 账号上。
+看界面和下判断走 Cursor Python SDK，在本机启动一次不带文件和终端工具的智能体，把控件树和截图交给它，只取回 JSON。`agent code` 在输出目录启动可以写文件的 Cursor 智能体。默认模型是 `composer-2.5`，换模型时改 `PYQT_AGENT_MODEL` 或加上 `--model`。费用记在这个 Cursor 账号上。
 
-## 写需求书
+## 写测试需求书
+
+测试需求书通常不用手写。需要单独看格式时：
 
 复制 [templates/需求书模板.docx](templates/需求书模板.docx)，按 [docs/需求书填写说明.md](docs/需求书填写说明.md) 填写。填好的例子是 [templates/需求书示例.docx](templates/需求书示例.docx)。
 
@@ -47,5 +63,6 @@ agent test --exe C:\apps\ExpenseEntry.exe --requirements 需求.docx --out repor
 ## 重新生成模板
 
 ```bat
+python -m pyqt_agent.product_spec
 python -m pyqt_agent.template_builder
 ```
