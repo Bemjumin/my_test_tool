@@ -20,6 +20,18 @@ set PYQT_AGENT_MODEL=composer-2.5
 
 看界面和下判断走 Cursor Python SDK，在本机启动一次不带文件和终端工具的智能体，把控件树和截图交给它，只取回 JSON。默认模型是 `composer-2.5`，换模型时改 `PYQT_AGENT_MODEL` 或加上 `--model`。费用记在这个 Cursor 账号上。
 
+## 先和用户确认，再交给编程
+
+技术需求书给 coding agent 和测试智能体。用户不读那份文档。
+
+用技术需求书生成一份确认单。确认单只写「你会做什么」和「这时你会看到什么」，每一条让用户勾选「是这样」「不是这样」或「我要补充」。
+
+```bat
+agent confirm --requirements 需求.docx --out 用户确认.docx
+```
+
+和用户一起看确认单，不要讲解控件、接口或用例编号。用户写了「不是这样」或补充时，先改技术需求书，再重新生成确认单。全部关键条目标成「是这样」之后，把原来的 `需求.docx` 交给 coding agent。确认单最后一页是给你留档的对照表，打印给用户前删掉。
+
 ## 写需求书
 
 复制 [templates/需求书模板.docx](templates/需求书模板.docx)，按 [docs/需求书填写说明.md](docs/需求书填写说明.md) 填写。填好的例子是 [templates/需求书示例.docx](templates/需求书示例.docx)。
