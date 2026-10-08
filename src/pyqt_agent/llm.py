@@ -107,6 +107,36 @@ def _cursor_prompt(api_key: str, model: str, cwd: str, text: str, images: list[b
     return body
 
 
+def run_local_agent(prompt: str, *, cwd: str, model: str | None = None, api_key: str | None = None) -> str:
+    """在指定目录启动带文件工具的 Cursor 智能体，用来按确认后的需求写程序。"""
+    key = os.environ.get("CURSOR_API_KEY", "") if api_key is None else api_key
+    if not key:
+        raise LlmError("未设置 CURSOR_API_KEY。请在 cursor.com/dashboard 的 API Keys 里创建用户密钥或服务账号密钥。")
+    chosen = model or os.environ.get("PYQT_AGENT_MODEL", _DEFAULT_MODEL)
+    try:
+        from cursor_sdk import Agent, AgentOptions, LocalAgentOptions
+    except ImportError as exc:
+        raise LlmError("未安装 cursor-sdk。请先执行 pip install -e .") from exc
+    try:
+        result = Agent.prompt(
+            prompt,
+            AgentOptions(
+                model=chosen,
+                api_key=key,
+                local=LocalAgentOptions(cwd=cwd, setting_sources=[]),
+            ),
+        )
+    except LlmError:
+        raise
+    except Exception as exc:
+        raise LlmError(f"Cursor 调用失败：{exc}") from exc
+    status = getattr(result, "status", "finished")
+    body = getattr(result, "result", "") or ""
+    if status == "error":
+        raise LlmError(f"Cursor 没有完成开发：{body or status}")
+    return str(body)
+
+
 def _shrink_png(png: bytes) -> bytes:
     try:
         from PIL import Image
