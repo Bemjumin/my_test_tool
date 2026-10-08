@@ -1,0 +1,2 @@
+# my_test_tool
+用于本地测试windows x86环境下的pyqt应用程序的AI智能体
