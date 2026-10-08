@@ -9,15 +9,20 @@ from pyqt_agent import __version__
 from pyqt_agent.code_agent import develop
 from pyqt_agent.confirm import write_confirmation
 from pyqt_agent.product_agent import write_customer_doc
+from pyqt_agent.server import serve
 from pyqt_agent.session import run_session
 from pyqt_agent.test_agent import run_test_agent
 from pyqt_agent.test_spec import write_test_spec
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="agent", description="按一份产品需求说明书确认需求、开发 PyQt 程序，并生成测试需求书做黑盒测试。")
+    parser = argparse.ArgumentParser(prog="agent", description="在本机打开产品需求工作台，分别做需求阐述、开发和测试。")
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
+
+    service = sub.add_parser("serve", help="在本机启动页面，分别提交需求阐述、开发和测试")
+    service.add_argument("--host", default="127.0.0.1", help="监听地址，默认只接受本机")
+    service.add_argument("--port", type=int, default=8765, help="端口，默认 8765")
 
     product = sub.add_parser("product", help="把产品需求说明书改写成给客户逐条确认的说明")
     product.add_argument("--requirements", required=True, help="手写的产品需求说明书")
@@ -50,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     confirm.add_argument("--out", required=True, help="给用户的确认单路径，或输出目录")
 
     args = parser.parse_args(argv)
+    if args.command == "serve":
+        return serve(args.host, args.port)
     if args.command == "product":
         try:
             path = write_customer_doc(args.requirements, args.out)
