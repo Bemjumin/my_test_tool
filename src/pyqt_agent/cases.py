@@ -203,7 +203,8 @@ def _cases_for_feature(feature: FeatureDetail, untested: list[Untested]) -> list
 def _make_case(feature, kind, title, steps, expected, suffix: str = "") -> TestCase:
     ident = f"TC-{feature.feature_id}-{kind}"
     if suffix:
-        ident = f"{ident}-{re.sub(r'[^0-9A-Za-z\u4e00-\u9fff]+', '', suffix)}"
+        cleaned = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", suffix)
+        ident = f"{ident}-{cleaned}"
     return TestCase(
         id=ident,
         feature_id=feature.feature_id,
