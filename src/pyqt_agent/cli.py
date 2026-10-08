@@ -17,15 +17,13 @@ def main(argv: list[str] | None = None) -> int:
     test.add_argument("--exe", required=True, help="要启动的 PyQt 程序")
     test.add_argument("--requirements", required=True, help="Word 需求书")
     test.add_argument("--out", required=True, help="报告目录")
-    test.add_argument("--api-base", default=None, help="模型接口地址，默认读取 PYQT_AGENT_API_BASE")
-    test.add_argument("--model", default=None, help="模型名称，默认读取 PYQT_AGENT_MODEL")
+    test.add_argument("--model", default=None, help="Cursor 模型编号，默认 composer-2.5，也可设置 PYQT_AGENT_MODEL")
     args = parser.parse_args(argv)
     if args.command == "test":
         result = run_session(
             args.exe,
             args.requirements,
             args.out,
-            api_base=args.api_base,
             model=args.model,
         )
         print(f"报告：{result.report_path}")

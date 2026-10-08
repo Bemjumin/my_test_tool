@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from pyqt_agent.llm import LlmClient, LlmError, extract_json
@@ -14,40 +12,44 @@ def test_extract_json_from_fence_and_surrounding_text():
 def test_invalid_json_is_sent_back_once():
     calls = []
 
-    def poster(url, key, payload, timeout):
-        del url, key, timeout
-        calls.append(payload)
+    def runner(text, images):
+        calls.append((text, images))
         if len(calls) == 1:
-            content = "not json"
-        else:
-            content = '{"ok": true}'
-        return 200, json.dumps({"choices": [{"message": {"content": content}}]})
+            return "not json"
+        return '{"ok": true}'
 
-    client = LlmClient("https://example.invalid/v1", "secret", "demo", poster=poster)
-    assert client.complete_json("系统", "任务：判定") == {"ok": True}
+    client = LlmClient("crsr_test", "composer-2.5", runner=runner)
+    assert client.complete_json("系统", "任务：判定", images=[b"png"]) == {"ok": True}
     assert len(calls) == 2
-    assert "不是一个 JSON 对象" in calls[1]["messages"][1]["content"][0]["text"]
+    assert calls[0][0].startswith("系统")
+    assert "任务：判定" in calls[0][0]
+    assert calls[0][1] == [b"png"]
+    assert "不是一个 JSON 对象" in calls[1][0]
+    assert calls[1][1] == [b"png"]
 
 
-def test_http_400_retries_without_json_mode():
-    seen = []
+def test_cursor_error_status_is_reported():
+    def runner(text, images):
+        del text, images
+        raise LlmError("Cursor 运行失败")
 
-    def poster(url, key, payload, timeout):
-        del url, key, timeout
-        seen.append("response_format" in payload)
-        if "response_format" in payload:
-            return 400, "unsupported"
-        return 200, json.dumps({"choices": [{"message": {"content": '{"ok": true}'}}]})
-
-    client = LlmClient("https://example.invalid/v1", "secret", "demo", poster=poster)
-    assert client.complete_json("系统", "任务：判定") == {"ok": True}
-    assert seen == [True, False]
+    client = LlmClient("crsr_test", runner=runner)
+    with pytest.raises(LlmError, match="Cursor 运行失败"):
+        client.complete_json("系统", "任务：判定")
 
 
 def test_missing_api_key(monkeypatch):
-    monkeypatch.delenv("PYQT_AGENT_API_KEY", raising=False)
-    with pytest.raises(LlmError):
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+    with pytest.raises(LlmError, match="CURSOR_API_KEY"):
         LlmClient.from_env()
+
+
+def test_model_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("CURSOR_API_KEY", "crsr_test")
+    monkeypatch.setenv("PYQT_AGENT_MODEL", "auto")
+    client = LlmClient.from_env(runner=lambda text, images: "{}")
+    assert client.model == "auto"
+    assert client.complete_json("系统", "任务：判定") == {}
 
 
 def test_action_aliases():

@@ -34,7 +34,6 @@ def run_session(
     *,
     driver=None,
     llm: LlmClient | None = None,
-    api_base: str | None = None,
     model: str | None = None,
     max_steps: int = 8,
     max_explore: int = 6,
@@ -64,7 +63,7 @@ def run_session(
         driver = create_windows_driver()
     if llm is None:
         try:
-            llm = LlmClient.from_env(api_base=api_base, model=model)
+            llm = LlmClient.from_env(model=model)
         except LlmError as exc:
             notes.append(str(exc))
             return _emit(output, requirements, 2, untested=untested, notes=notes)

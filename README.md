@@ -12,12 +12,13 @@
 py -3.11 -m venv .venv
 .venv\Scripts\activate
 pip install -e ".[windows]"
-set PYQT_AGENT_API_KEY=你的密钥
-set PYQT_AGENT_API_BASE=https://api.openai.com/v1
-set PYQT_AGENT_MODEL=gpt-4o
+set CURSOR_API_KEY=crsr_你的密钥
+set PYQT_AGENT_MODEL=composer-2.5
 ```
 
-`PYQT_AGENT_API_BASE` 和 `PYQT_AGENT_MODEL` 可按实际的视觉模型接口修改。接口需要兼容 OpenAI 的 chat completions，并接受截图。
+密钥在 [cursor.com/dashboard](https://cursor.com/dashboard) 的 API Keys 里创建，使用用户密钥或服务账号密钥。团队管理员密钥不能调用 Python SDK。
+
+看界面和下判断走 Cursor Python SDK，在本机启动一次不带文件和终端工具的智能体，把控件树和截图交给它，只取回 JSON。默认模型是 `composer-2.5`，换模型时改 `PYQT_AGENT_MODEL` 或加上 `--model`。费用记在这个 Cursor 账号上。
 
 ## 写需求书
 

@@ -1,16 +1,15 @@
-"""调用可看截图的 OpenAI 兼容接口。地址、密钥和模型由环境变量配置。"""
+"""通过 Cursor Python SDK 看界面并要回 JSON。不调用 OpenAI。"""
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
-import urllib.error
-import urllib.request
+import tempfile
 from io import BytesIO
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+_DEFAULT_MODEL = "composer-2.5"
 
 
 class LlmError(RuntimeError):
@@ -18,72 +17,45 @@ class LlmError(RuntimeError):
 
 
 class LlmClient:
-    def __init__(self, api_base: str, api_key: str, model: str, poster=None, timeout: float = 120):
+    def __init__(self, api_key: str, model: str = _DEFAULT_MODEL, cwd: str | None = None, runner=None):
         if not api_key:
-            raise LlmError("未设置 PYQT_AGENT_API_KEY。")
-        self.api_base = api_base.rstrip("/")
+            raise LlmError("未设置 CURSOR_API_KEY。请在 cursor.com/dashboard 的 API Keys 里创建用户密钥或服务账号密钥。")
         self.api_key = api_key
-        self.model = model
-        self._poster = poster or _post
-        self.timeout = timeout
+        self.model = model or _DEFAULT_MODEL
+        self.cwd = cwd or tempfile.mkdtemp(prefix="pyqt-agent-cursor-")
+        self._runner = runner
 
     @classmethod
-    def from_env(cls, api_base: str | None = None, model: str | None = None, poster=None) -> LlmClient:
+    def from_env(cls, model: str | None = None, runner=None, cwd: str | None = None) -> LlmClient:
         return cls(
-            api_base=api_base or os.environ.get("PYQT_AGENT_API_BASE", "https://api.openai.com/v1"),
-            api_key=os.environ.get("PYQT_AGENT_API_KEY", ""),
-            model=model or os.environ.get("PYQT_AGENT_MODEL", "gpt-4o"),
-            poster=poster,
+            api_key=os.environ.get("CURSOR_API_KEY", ""),
+            model=model or os.environ.get("PYQT_AGENT_MODEL", _DEFAULT_MODEL),
+            cwd=cwd,
+            runner=runner,
         )
 
     def complete_json(self, system: str, user: str, images: list[bytes] | None = None) -> dict:
-        raw = self._complete(system, user, images, json_mode=True)
+        prompt = f"{system}\n\n{user}"
+        raw = self._ask(prompt, images)
         try:
             return extract_json(raw)
         except (json.JSONDecodeError, ValueError):
             repair = (
-                user
+                prompt
                 + "\n\n你上一次的回复不是一个 JSON 对象。请只输出一个 JSON 对象，不要 Markdown。\n上次回复：\n"
                 + raw[:2000]
             )
-            raw = self._complete(system, repair, images, json_mode=True)
+            raw = self._ask(repair, images)
             try:
                 return extract_json(raw)
             except (json.JSONDecodeError, ValueError) as exc:
                 raise LlmError(f"模型没有返回合法 JSON：{exc}") from exc
 
-    def _complete(self, system: str, user: str, images: list[bytes] | None, json_mode: bool) -> str:
-        content: list[dict] = [{"type": "text", "text": user}]
-        for image in images or []:
-            if not image:
-                continue
-            encoded = base64.b64encode(_shrink_png(image)).decode("ascii")
-            content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}})
-        payload = {
-            "model": self.model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": content},
-            ],
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-        status, body = self._poster(self._endpoint(), self.api_key, payload, self.timeout)
-        if status == 400 and json_mode:
-            return self._complete(system, user, images, json_mode=False)
-        if status >= 400:
-            raise LlmError(f"模型接口返回 {status}：{body[:500]}")
-        try:
-            data = json.loads(body)
-            return data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, json.JSONDecodeError, TypeError) as exc:
-            raise LlmError(f"无法读取模型回复：{exc}") from exc
-
-    def _endpoint(self) -> str:
-        if self.api_base.endswith("/chat/completions"):
-            return self.api_base
-        return self.api_base + "/chat/completions"
+    def _ask(self, text: str, images: list[bytes] | None) -> str:
+        prepared = [_shrink_png(image) for image in images or [] if image]
+        if self._runner is not None:
+            return self._runner(text, prepared)
+        return _cursor_prompt(self.api_key, self.model, self.cwd, text, prepared)
 
 
 def extract_json(text: str) -> dict:
@@ -101,31 +73,51 @@ def extract_json(text: str) -> dict:
     return value
 
 
+def _cursor_prompt(api_key: str, model: str, cwd: str, text: str, images: list[bytes]) -> str:
+    try:
+        from cursor_sdk import Agent, AgentOptions, LocalAgentOptions, SDKImage, UserMessage
+    except ImportError as exc:
+        raise LlmError("未安装 cursor-sdk。请先执行 pip install -e .") from exc
+    message: str | object
+    if images:
+        message = UserMessage(
+            text=text,
+            images=[SDKImage.from_data(image, "image/png") for image in images],
+        )
+    else:
+        message = text
+    try:
+        result = Agent.prompt(
+            message,
+            AgentOptions(
+                model=model,
+                api_key=api_key,
+                tools=[],
+                local=LocalAgentOptions(cwd=cwd, setting_sources=[]),
+            ),
+        )
+    except LlmError:
+        raise
+    except Exception as exc:
+        raise LlmError(f"Cursor 调用失败：{exc}") from exc
+    status = getattr(result, "status", "finished")
+    body = getattr(result, "result", "") or ""
+    if status == "error" or not body.strip():
+        raise LlmError(f"Cursor 没有返回可用文本：{body or status}")
+    return body
+
+
 def _shrink_png(png: bytes) -> bytes:
     try:
         from PIL import Image
-    except ImportError:
-        return png
-    image = Image.open(BytesIO(png))
-    if image.width <= 1280:
-        return png
-    ratio = 1280 / image.width
-    resized = image.resize((1280, max(1, int(image.height * ratio))))
-    buffer = BytesIO()
-    resized.save(buffer, format="PNG")
-    return buffer.getvalue()
 
-
-def _post(url: str, api_key: str, payload: dict, timeout: float) -> tuple[int, str]:
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode("utf-8", errors="replace")
+        image = Image.open(BytesIO(png))
+        if image.width <= 1280:
+            return png
+        ratio = 1280 / image.width
+        resized = image.resize((1280, max(1, int(image.height * ratio))))
+        buffer = BytesIO()
+        resized.save(buffer, format="PNG")
+        return buffer.getvalue()
+    except Exception:
+        return png
