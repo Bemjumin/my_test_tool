@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import codecs
 import json
 import os
 import re
 import sys
 import tempfile
+import time
 from io import BytesIO
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -140,71 +142,101 @@ def run_local_agent(prompt: str, *, cwd: str, model: str | None = None, api_key:
     return str(body)
 
 
-_PIPE_NOWAIT = 0x00000001
-
-
-def _with_pipe_blocking(mode: int, blocking: bool) -> int:
-    if blocking:
-        return mode & ~_PIPE_NOWAIT
-    return mode | _PIPE_NOWAIT
-
-
 def _ensure_pipe_blocking() -> None:
-    """Windows 上的 Python 3.11 没有 os.get_blocking，cursor-sdk 启动时会用到它。"""
-    if hasattr(os, "get_blocking") and hasattr(os, "set_blocking"):
+    """Windows 上的 Python 3.11 不能把管道改成非阻塞，否则读取会报 Invalid argument。"""
+    if sys.platform != "win32":
         return
-    if sys.platform == "win32":
-        _install_windows_pipe_blocking()
+    if sys.version_info >= (3, 12) and hasattr(os, "get_blocking") and hasattr(os, "set_blocking"):
+        return
+    _install_windows_pipe_blocking()
 
 
 def _install_windows_pipe_blocking() -> None:
+    import cursor_sdk._bridge as bridge
+
+    bridge._read_discovery = _read_discovery_windows
+    os.get_blocking = lambda fd: True
+    os.set_blocking = lambda fd, blocking: None
+
+
+def _read_discovery_windows(process, timeout: float, *, peek=None, read=None):
+    import cursor_sdk._bridge as bridge
+
+    if process.stderr is None:
+        raise bridge.CursorSDKError("Bridge process stderr is unavailable")
+    fd = process.stderr.fileno()
+    peek_available = peek or _windows_peek_available
+    read_bytes = read or os.read
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    deadline = time.monotonic() + timeout
+    pending = ""
+    stderr_lines: list[str] = []
+
+    while time.monotonic() < deadline:
+        available = peek_available(fd)
+        if available:
+            pending, discovery = _consume_discovery_bytes(
+                pending,
+                read_bytes(fd, min(available, 8192)),
+                decoder,
+                stderr_lines,
+                bridge.parse_discovery_line,
+            )
+            if discovery is not None:
+                return discovery
+            continue
+        exit_code = process.poll()
+        if exit_code is not None:
+            if peek_available(fd):
+                continue
+            final_text = decoder.decode(b"", final=True)
+            if final_text:
+                pending += final_text
+            raise bridge.CursorSDKError(
+                f"Bridge exited before discovery with status {exit_code}: "
+                + "".join(stderr_lines)
+                + pending
+            )
+        time.sleep(0.05)
+    raise bridge.CursorSDKError("Timed out waiting for bridge discovery")
+
+
+def _consume_discovery_bytes(pending, chunk, decoder, stderr_lines, parse):
+    pending += decoder.decode(chunk)
+    while "\n" in pending:
+        line, pending = pending.split("\n", 1)
+        line += "\n"
+        stderr_lines.append(line)
+        discovery = parse(line)
+        if discovery is not None:
+            return pending, discovery
+    return pending, None
+
+
+def _windows_peek_available(fd: int) -> int:
     import ctypes
     import msvcrt
     from ctypes import wintypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    get_state = kernel32.GetNamedPipeHandleStateW
-    get_state.argtypes = [
+    peek = kernel32.PeekNamedPipe
+    peek.argtypes = [
         wintypes.HANDLE,
-        ctypes.POINTER(wintypes.DWORD),
-        ctypes.POINTER(wintypes.DWORD),
-        ctypes.POINTER(wintypes.DWORD),
-        ctypes.POINTER(wintypes.DWORD),
-        wintypes.LPWSTR,
+        wintypes.LPVOID,
         wintypes.DWORD,
-    ]
-    get_state.restype = wintypes.BOOL
-    set_state = kernel32.SetNamedPipeHandleState
-    set_state.argtypes = [
-        wintypes.HANDLE,
         ctypes.POINTER(wintypes.DWORD),
         ctypes.POINTER(wintypes.DWORD),
         ctypes.POINTER(wintypes.DWORD),
     ]
-    set_state.restype = wintypes.BOOL
-
-    def pipe_mode(handle) -> int | None:
-        mode = wintypes.DWORD()
-        if not get_state(handle, ctypes.byref(mode), None, None, None, None, 0):
-            return None
-        return int(mode.value)
-
-    def get_blocking(fd: int) -> bool:
-        mode = pipe_mode(msvcrt.get_osfhandle(fd))
-        if mode is None:
-            return True
-        return not bool(mode & _PIPE_NOWAIT)
-
-    def set_blocking(fd: int, blocking: bool) -> None:
-        handle = msvcrt.get_osfhandle(fd)
-        current = pipe_mode(handle)
-        mode = wintypes.DWORD(_with_pipe_blocking(0 if current is None else current, blocking))
-        if not set_state(handle, ctypes.byref(mode), None, None):
-            error = ctypes.get_last_error()
-            raise OSError(error, "无法切换 Cursor 桥接进程的管道读取方式")
-
-    os.get_blocking = get_blocking
-    os.set_blocking = set_blocking
+    peek.restype = wintypes.BOOL
+    available = wintypes.DWORD()
+    handle = msvcrt.get_osfhandle(fd)
+    if peek(handle, None, 0, None, ctypes.byref(available), None):
+        return int(available.value)
+    error = ctypes.get_last_error()
+    if error == 109:
+        return 0
+    raise OSError(error, "无法查看 Cursor 桥接进程的输出")
 
 
 def _shrink_png(png: bytes) -> bytes:

@@ -10,7 +10,14 @@ from pyqt_agent.code_agent import develop
 from pyqt_agent.docx_parser import parse_requirements
 from pyqt_agent.models import UNTESTED_MISSING, SessionResult
 from pyqt_agent.product_agent import read_decisions, write_customer_doc
-from pyqt_agent.product_spec import APPENDIX_NOTE, build_product_example, build_product_template, parse_product_spec, render_formal
+from pyqt_agent.product_spec import (
+    APPENDIX_NOTE,
+    build_product_example,
+    build_product_template,
+    build_simple_example,
+    parse_product_spec,
+    render_formal,
+)
 from pyqt_agent.test_agent import run_test_agent
 from pyqt_agent.test_spec import write_test_spec
 
@@ -98,6 +105,29 @@ def test_customer_sheet_is_plain_language(tmp_path):
     _set_verdicts(out, "是这样")
     again = write_customer_doc(source, out)
     assert all(item.verdict == "（待确认）" for item in read_decisions(again))
+
+
+def test_simple_spec_is_ready_to_try(tmp_path):
+    source = ROOT / "templates" / "简单产品需求说明书.docx"
+    spec = parse_product_spec(source)
+    assert spec.scope.software_name == "问候"
+    assert [item.feature_id for item in spec.features] == ["F-001"]
+    assert "调研时客户提过要做语音播报" in "\n".join(spec.appendix)
+    formal = render_formal(spec)
+    assert "调研时客户提过" not in formal
+    assert "不测语音播报" in formal
+    customer = write_customer_doc(source, tmp_path / "客户确认.docx")
+    decisions = read_decisions(customer)
+    assert any("小明" in item.content and "你好，小明" in item.content for item in decisions)
+    assert any("这次先不做" in item.content and "语音播报" in item.content for item in decisions)
+    assert not any("调研时客户提过" in item.content for item in decisions)
+    test_spec = write_test_spec(source, tmp_path / "测试需求说明书.docx")
+    requirements = parse_requirements(test_spec)
+    cases, untested = expand_cases(requirements)
+    assert {case.id for case in cases} == {"TC-F-001-valid", "TC-F-001-invalid"}
+    assert requirements.features[0].name == "打招呼"
+    assert any("语音播报" in item.item for item in untested)
+    assert "调研时客户提过" not in _text(test_spec)
 
 
 def test_generated_test_spec_round_trips_without_the_appendix(tmp_path):
