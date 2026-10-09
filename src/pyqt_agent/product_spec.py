@@ -393,8 +393,13 @@ def build_product_example(path: str | Path) -> None:
     _build(path, example=True)
 
 
-def _build(path: str | Path, example: bool) -> None:
-    data = _example_data() if example else None
+def build_simple_example(path: str | Path) -> None:
+    _build(path, example=True, data=_simple_data())
+
+
+def _build(path: str | Path, example: bool, data=None) -> None:
+    if data is None and example:
+        data = _example_data()
     document = Document()
     _set_song(document)
     section = document.sections[0]
@@ -479,6 +484,72 @@ def _build(path: str | Path, example: bool) -> None:
 
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     document.save(str(path))
+
+
+def _simple_data() -> dict:
+    return {
+        "cover": {
+            "公司名称": "示例公司",
+            "文档标题": "问候产品需求说明书",
+            "文档编号": "PRD-HELLO-001",
+            "编写人": "产品经理",
+            "模块名称": "问候",
+            "部门": "产品",
+            "保密等级": "内部",
+            "日期": "2026-10-09",
+            "版权说明": "仅供确认、开发和测试使用",
+        },
+        "revisions": [("1", "全文", "首版", "2026-10-09", "—", "1.0.0", "产品经理", PLACEHOLDER)],
+        "purpose": "让访客输入名字后看到一句问候",
+        "scope": {
+            "软件名称": "问候",
+            "软件要做的事": "填写名字后显示「你好，小明」这样的问候",
+            "软件不做的事": "不测语音播报",
+            "应用目标": "打开窗口就能打一个招呼",
+        },
+        "definitions": [("名字", "访客怎么称呼自己", "名字")],
+        "references": [("无", "无")],
+        "background": "先用一个窗口确认需求阐述、开发和测试是否按同一份说明书工作。",
+        "schedule": "客户确认之后开始开发。",
+        "description": "一个桌面窗口。上面有名字输入框和「打招呼」按钮，点下去后在窗口里显示问候。",
+        "runtime": {
+            "exe 文件名": "Hello.exe",
+            "主窗口标题": "问候",
+            "如何启动": "双击 Hello.exe",
+            "启动参数": "无",
+            "如何退出": "点击「关闭」",
+            "工作目录": "与 exe 相同",
+            "是否需要登录": "否",
+            "测试账号": "无",
+            "分辨率": "1920×1080",
+        },
+        "files": [],
+        "users": [("访客", "打开这个窗口的人", "填写自己的名字并看到问候", "问候里有没有刚才填的名字", "不使用别的菜单")],
+        "modules": [("M-001", "问候", "填写名字并显示问候", "高")],
+        "obvious": [("「名字」为空时，「打招呼」仍然可以点击",)],
+        "rules": [("问候语是「你好，」加上刚才填写的名字", "小明", "你好，小明")],
+        "features": [
+            {
+                "id": "F-001",
+                "name": "打招呼",
+                "module": "M-001",
+                "intro": "按填写的名字显示一句问候",
+                "entry": "主窗口",
+                "precondition": "主窗口已打开，名字为空",
+                "steps": [("合法", "点击「打招呼」"), ("非法", "不填写「名字」时点击「打招呼」")],
+                "items": [("名字", "文本", "手填", "访客的称呼", "是", "小明", PLACEHOLDER, PLACEHOLDER)],
+                "screens": [
+                    ("问候语", "显示「你好，小明」", "合法"),
+                    ("提示", "请先填写名字", "非法"),
+                ],
+                "boundary": PLACEHOLDER,
+                "unacceptable": "请先填写名字",
+                "excluded": PLACEHOLDER,
+            }
+        ],
+        "appendix": ["调研时客户提过要做语音播报，本次不纳入。"],
+        "signatures": [("产品经理", PLACEHOLDER, PLACEHOLDER), ("客户", PLACEHOLDER, PLACEHOLDER)],
+    }
 
 
 def _example_data() -> dict:
@@ -859,6 +930,7 @@ def main() -> None:
     root = Path(__file__).resolve().parents[2]
     build_product_template(root / "templates" / "产品需求说明书模板.docx")
     build_product_example(root / "templates" / "产品需求说明书示例.docx")
+    build_simple_example(root / "templates" / "简单产品需求说明书.docx")
 
 
 if __name__ == "__main__":
