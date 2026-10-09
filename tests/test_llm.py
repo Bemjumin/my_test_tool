@@ -1,6 +1,8 @@
 import pytest
 
-from pyqt_agent.llm import LlmClient, LlmError, extract_json
+import os
+
+from pyqt_agent.llm import LlmClient, LlmError, _ensure_pipe_blocking, _with_pipe_blocking, extract_json
 from pyqt_agent.tasks import normalize_action, normalize_status
 
 
@@ -50,6 +52,41 @@ def test_model_comes_from_the_environment(monkeypatch):
     client = LlmClient.from_env(runner=lambda text, images: "{}")
     assert client.model == "auto"
     assert client.complete_json("系统", "任务：判定") == {}
+
+
+def test_pipe_nowait_flag_turns_blocking_on_and_off():
+    assert _with_pipe_blocking(0, False) == 1
+    assert _with_pipe_blocking(1, True) == 0
+    assert _with_pipe_blocking(0x4, False) == 0x5
+    assert _with_pipe_blocking(0x5, True) == 0x4
+
+
+def test_windows_without_blocking_helpers_installs_them(monkeypatch):
+    import sys
+
+    from pyqt_agent import llm
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delattr(os, "get_blocking", raising=False)
+    monkeypatch.delattr(os, "set_blocking", raising=False)
+    monkeypatch.setattr(llm, "_install_windows_pipe_blocking", lambda: (_assign_helpers()))
+
+    def _assign_helpers():
+        os.get_blocking = lambda fd: True
+        os.set_blocking = lambda fd, blocking: None
+
+    _ensure_pipe_blocking()
+    assert os.get_blocking(0) is True
+    os.set_blocking(0, False)
+
+
+def test_existing_blocking_helpers_stay_in_place(monkeypatch):
+    from pyqt_agent import llm
+
+    called = []
+    monkeypatch.setattr(llm, "_install_windows_pipe_blocking", lambda: called.append(True))
+    _ensure_pipe_blocking()
+    assert called == []
 
 
 def test_action_aliases():

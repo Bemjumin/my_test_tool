@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import tempfile
 from io import BytesIO
 
@@ -74,6 +75,7 @@ def extract_json(text: str) -> dict:
 
 
 def _cursor_prompt(api_key: str, model: str, cwd: str, text: str, images: list[bytes]) -> str:
+    _ensure_pipe_blocking()
     try:
         from cursor_sdk import Agent, AgentOptions, LocalAgentOptions, SDKImage, UserMessage
     except ImportError as exc:
@@ -113,6 +115,7 @@ def run_local_agent(prompt: str, *, cwd: str, model: str | None = None, api_key:
     if not key:
         raise LlmError("未设置 CURSOR_API_KEY。请在 cursor.com/dashboard 的 API Keys 里创建用户密钥或服务账号密钥。")
     chosen = model or os.environ.get("PYQT_AGENT_MODEL", _DEFAULT_MODEL)
+    _ensure_pipe_blocking()
     try:
         from cursor_sdk import Agent, AgentOptions, LocalAgentOptions
     except ImportError as exc:
@@ -135,6 +138,73 @@ def run_local_agent(prompt: str, *, cwd: str, model: str | None = None, api_key:
     if status == "error":
         raise LlmError(f"Cursor 没有完成开发：{body or status}")
     return str(body)
+
+
+_PIPE_NOWAIT = 0x00000001
+
+
+def _with_pipe_blocking(mode: int, blocking: bool) -> int:
+    if blocking:
+        return mode & ~_PIPE_NOWAIT
+    return mode | _PIPE_NOWAIT
+
+
+def _ensure_pipe_blocking() -> None:
+    """Windows 上的 Python 3.11 没有 os.get_blocking，cursor-sdk 启动时会用到它。"""
+    if hasattr(os, "get_blocking") and hasattr(os, "set_blocking"):
+        return
+    if sys.platform == "win32":
+        _install_windows_pipe_blocking()
+
+
+def _install_windows_pipe_blocking() -> None:
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_state = kernel32.GetNamedPipeHandleStateW
+    get_state.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+    ]
+    get_state.restype = wintypes.BOOL
+    set_state = kernel32.SetNamedPipeHandleState
+    set_state.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    set_state.restype = wintypes.BOOL
+
+    def pipe_mode(handle) -> int | None:
+        mode = wintypes.DWORD()
+        if not get_state(handle, ctypes.byref(mode), None, None, None, None, 0):
+            return None
+        return int(mode.value)
+
+    def get_blocking(fd: int) -> bool:
+        mode = pipe_mode(msvcrt.get_osfhandle(fd))
+        if mode is None:
+            return True
+        return not bool(mode & _PIPE_NOWAIT)
+
+    def set_blocking(fd: int, blocking: bool) -> None:
+        handle = msvcrt.get_osfhandle(fd)
+        current = pipe_mode(handle)
+        mode = wintypes.DWORD(_with_pipe_blocking(0 if current is None else current, blocking))
+        if not set_state(handle, ctypes.byref(mode), None, None):
+            error = ctypes.get_last_error()
+            raise OSError(error, "无法切换 Cursor 桥接进程的管道读取方式")
+
+    os.get_blocking = get_blocking
+    os.set_blocking = set_blocking
 
 
 def _shrink_png(png: bytes) -> bytes:
